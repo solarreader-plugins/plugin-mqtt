@@ -21,6 +21,9 @@
  */
 package de.schnippsche.solarreader.plugins.mqtt;
 
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonSyntaxException;
 import de.schnippsche.solarreader.backend.connection.general.ConnectionFactory;
 import de.schnippsche.solarreader.backend.connection.mqtt.MqttConnection;
 import de.schnippsche.solarreader.backend.connection.mqtt.MqttConnectionFactory;
@@ -28,25 +31,17 @@ import de.schnippsche.solarreader.backend.protocol.KnownProtocol;
 import de.schnippsche.solarreader.backend.provider.AbstractProvider;
 import de.schnippsche.solarreader.backend.provider.ProviderProperty;
 import de.schnippsche.solarreader.backend.provider.SupportedInterface;
+import de.schnippsche.solarreader.backend.singleton.GlobalGson;
 import de.schnippsche.solarreader.backend.table.Table;
 import de.schnippsche.solarreader.backend.util.Setting;
 import de.schnippsche.solarreader.backend.util.TimeEvent;
 import de.schnippsche.solarreader.database.Activity;
 import de.schnippsche.solarreader.database.ProviderData;
-import de.schnippsche.solarreader.frontend.ui.HtmlInputType;
-import de.schnippsche.solarreader.frontend.ui.HtmlWidth;
-import de.schnippsche.solarreader.frontend.ui.UIInputElementBuilder;
-import de.schnippsche.solarreader.frontend.ui.UIList;
-import de.schnippsche.solarreader.frontend.ui.UITextElementBuilder;
-import de.schnippsche.solarreader.frontend.ui.ValueText;
+import de.schnippsche.solarreader.frontend.ui.*;
 import de.schnippsche.solarreader.plugin.PluginMetadata;
 import java.io.IOException;
 import java.net.ConnectException;
-import java.util.Iterator;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
-import java.util.ResourceBundle;
+import java.util.*;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.TimeUnit;
 import org.eclipse.paho.client.mqttv3.IMqttDeliveryToken;
@@ -74,7 +69,9 @@ import org.tinylog.Logger;
     usedProtocol = KnownProtocol.HTTP,
     supports = "")
 public class Mqtt extends AbstractProvider implements MqttCallback {
-  /** the constant topic name */
+  /**
+   * the constant topic name
+   */
   protected static final String TOPIC_NAME = "topic_name";
 
   private static final String REQUIRED_ERROR = "mqtt.required.error";
@@ -294,13 +291,42 @@ public class Mqtt extends AbstractProvider implements MqttCallback {
 
   @Override
   public void messageArrived(String topic, MqttMessage mqttMessage) {
-    String msg = new String(mqttMessage.getPayload());
-    messageQueue.offer(new ValueText(topic, msg));
-    Logger.debug("message received, topic='{}', message='{}'", topic, msg);
+    String payload = extractPayloadValue(mqttMessage);
+    messageQueue.offer(new ValueText(topic, payload));
+    Logger.debug(
+        "message received, topic='{}', payload='{}', payload value='{}",
+        topic,
+        new String(mqttMessage.getPayload()),
+        payload);
   }
 
   @Override
   public void deliveryComplete(IMqttDeliveryToken token) {
     // Nothing to do
+  }
+
+  /**
+   * Converts the payload of an MQTT message to a meaningful string.
+   * If the payload is a JSON object with a "value" field, extract it.
+   * Otherwise, return the raw payload string.
+   *
+   * @param mqttMessage the incoming MQTT message
+   * @return extracted value as string or raw message
+   */
+  private String extractPayloadValue(MqttMessage mqttMessage) {
+    String raw = new String(mqttMessage.getPayload());
+    try {
+      JsonElement element = GlobalGson.getInstance().fromJson(raw, JsonElement.class);
+      if (element.isJsonObject()) {
+        JsonObject obj = element.getAsJsonObject();
+        if (obj.has("value")) {
+          return obj.get("value").getAsString();
+        }
+      }
+    } catch (JsonSyntaxException e) {
+      // Not a JSON string, fallback to raw
+    }
+
+    return raw;
   }
 }
