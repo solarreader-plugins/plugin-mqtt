@@ -3,9 +3,10 @@
 ![Last Commit](https://img.shields.io/github/last-commit/solarreader-plugins/plugin-mqtt)
 ![Issues](https://img.shields.io/github/issues/solarreader-plugins/plugin-mqtt)
 
-
 # MQTT Plugin for Solarreader
-This SolarReader plugin subscribes to an MQTT broker to receive incoming messages.
+
+This SolarReader plugin communicates with an MQTT broker by subscribing to incoming messages and publishing outgoing
+data.
 
 The plugin requires the main project Solarreader-core, which can be found here:
 https://github.com/solarreader-core/solarreader

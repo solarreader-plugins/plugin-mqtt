@@ -23,6 +23,7 @@ package de.schnippsche.solarreader.test;
 
 import de.schnippsche.solarreader.backend.connection.general.ConnectionFactory;
 import de.schnippsche.solarreader.backend.connection.mqtt.MqttConnection;
+import de.schnippsche.solarreader.database.ExporterData;
 import de.schnippsche.solarreader.database.ProviderData;
 import de.schnippsche.solarreader.plugins.mqtt.Mqtt;
 import java.io.IOException;
@@ -32,13 +33,21 @@ class MqttTest {
   @Test
   void testMqtt() throws IOException, InterruptedException {
     GeneralTestHelper generalTestHelper = new GeneralTestHelper();
-    ProviderData providerData = new ProviderData();
-    providerData.setPluginName("Mqtt");
-    providerData.setName("MqttTest");
     ConnectionFactory<MqttConnection> testFactory = knownConfiguration -> new MqttTestConnection();
     Mqtt mqtt = new Mqtt(testFactory);
+    // import
+    ProviderData providerData = new ProviderData();
+    providerData.setPluginName("mqtt");
+    providerData.setName("MqttTest");
     providerData.setSetting(mqtt.getDefaultProviderSetting());
     mqtt.setProviderData(providerData);
     generalTestHelper.testProviderInterface(mqtt);
+    // export
+    ExporterData exporterData = new ExporterData();
+    exporterData.setPluginName("mqtt");
+    exporterData.setName("MqttTest");
+    exporterData.setSetting(mqtt.getDefaultExporterSetting());
+    mqtt.setExporterData(exporterData);
+    generalTestHelper.testExporterInterface(mqtt);
   }
 }

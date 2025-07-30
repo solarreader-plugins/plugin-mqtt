@@ -21,93 +21,55 @@
  */
 package de.schnippsche.solarreader.plugins.mqtt;
 
-import com.google.gson.JsonElement;
-import com.google.gson.JsonObject;
-import com.google.gson.JsonSyntaxException;
 import de.schnippsche.solarreader.backend.connection.general.ConnectionFactory;
 import de.schnippsche.solarreader.backend.connection.mqtt.MqttConnection;
 import de.schnippsche.solarreader.backend.connection.mqtt.MqttConnectionFactory;
-import de.schnippsche.solarreader.backend.protocol.KnownProtocol;
-import de.schnippsche.solarreader.backend.provider.AbstractProvider;
+import de.schnippsche.solarreader.backend.exporter.ExporterInterface;
+import de.schnippsche.solarreader.backend.exporter.TransferData;
+import de.schnippsche.solarreader.backend.provider.ProviderInterface;
 import de.schnippsche.solarreader.backend.provider.ProviderProperty;
-import de.schnippsche.solarreader.backend.provider.SupportedInterface;
-import de.schnippsche.solarreader.backend.singleton.GlobalGson;
 import de.schnippsche.solarreader.backend.table.Table;
 import de.schnippsche.solarreader.backend.util.Setting;
-import de.schnippsche.solarreader.backend.util.TimeEvent;
 import de.schnippsche.solarreader.database.Activity;
+import de.schnippsche.solarreader.database.ExporterData;
 import de.schnippsche.solarreader.database.ProviderData;
 import de.schnippsche.solarreader.frontend.ui.*;
-import de.schnippsche.solarreader.plugin.PluginMetadata;
 import java.io.IOException;
-import java.net.ConnectException;
 import java.util.*;
-import java.util.concurrent.ConcurrentLinkedQueue;
-import java.util.concurrent.TimeUnit;
-import org.eclipse.paho.client.mqttv3.IMqttDeliveryToken;
-import org.eclipse.paho.client.mqttv3.MqttCallback;
-import org.eclipse.paho.client.mqttv3.MqttMessage;
-import org.tinylog.Logger;
 
 /**
- * The {@link Mqtt} class is a provider class for interacting with an MQTT broker. It extends {@link
- * AbstractProvider} and implements the {@link MqttCallback} interface, enabling it to handle MQTT
- * messages and manage the MQTT connection.
- *
- * <p>This class facilitates the communication between the application and an MQTT broker, allowing
- * for receiving incoming messages. The implementation of the {@link MqttCallback} interface allows
- * the class to handle events such as message arrival, connection loss, and other MQTT
- * protocol-related events.
+ * MQTT plugin that implements both {@link ExporterInterface} and {@link ProviderInterface}.
+ * <p>
+ * This class manages MQTT communication for both exporting data to a broker and consuming data
+ * from a specified topic. It supports dynamic configuration updates, automatic reconnections,
+ * and uses a dedicated consumer thread to manage data export asynchronously.
  */
-@PluginMetadata(
-    name = "MQTT",
-    version = "1.0.1",
-    author = "Stefan Töngi",
-    url = "https://github.com/solarreader-plugins/plugin-Mqtt",
-    svgImage = "mqtt.svg",
-    supportedInterfaces = {SupportedInterface.NONE},
-    usedProtocol = KnownProtocol.HTTP,
-    supports = "")
-public class Mqtt extends AbstractProvider implements MqttCallback {
-  /**
-   * the constant topic name
-   */
+public class Mqtt implements ExporterInterface, ProviderInterface {
   protected static final String TOPIC_NAME = "topic_name";
-
-  private static final String REQUIRED_ERROR = "mqtt.required.error";
-  private final ConnectionFactory<MqttConnection> connectionFactory;
-  private final ConcurrentLinkedQueue<ValueText> messageQueue;
-  private MqttConnection connection;
-  private String topic;
+  protected static final String REQUIRED_ERROR = "mqtt.required.error";
+  private final MqttExporter exporter;
+  private final MqttProvider provider;
+  private ResourceBundle resourceBundle;
+  private Locale locale;
 
   /**
-   * Constructs a new instance of the {@link Mqtt} class using the default {@link
-   * MqttConnectionFactory}. This constructor initializes the MQTT provider with the default
-   * connection factory, allowing the application to interact with an MQTT broker. It also
-   * initializes the topic as an empty string and sets up a concurrent message queue for handling
-   * incoming messages.
+   * Default constructor initializing with {@link MqttConnectionFactory}.
+   * <p>
+   * Prepares the MQTT plugin using default connection configuration.
    */
   public Mqtt() {
     this(new MqttConnectionFactory());
   }
 
   /**
-   * Constructs a new instance of the {@link Mqtt} class with a custom {@link ConnectionFactory} for
-   * managing MQTT connections. This constructor allows you to provide a custom connection factory
-   * for creating and managing MQTT connections, offering flexibility in how the connection is
-   * established. It also initializes the topic as an empty string and sets up a concurrent message
-   * queue for message handling.
+   * Constructor allowing injection of a custom MQTT connection factory.
    *
-   * @param connectionFactory the {@link ConnectionFactory} to use for creating MQTT connections
+   * @param connectionFactory factory to create MQTT connections.
    */
   public Mqtt(ConnectionFactory<MqttConnection> connectionFactory) {
-    super();
-    this.connectionFactory = connectionFactory; // Initializes the connection factory for MQTT
-    topic = ""; // Default topic is an empty string
-    messageQueue =
-        new ConcurrentLinkedQueue<>(); // Initializes a thread-safe message queue for storing
-    // incoming messages
-    Logger.debug("instantiate {}", this.getClass().getName());
+    setCurrentLocale(Locale.getDefault());
+    this.exporter = new MqttExporter(connectionFactory);
+    this.provider = new MqttProvider(connectionFactory);
   }
 
   /**
@@ -124,12 +86,140 @@ public class Mqtt extends AbstractProvider implements MqttCallback {
   }
 
   @Override
+  public void setCurrentLocale(Locale locale) {
+    this.locale = locale;
+    this.resourceBundle = getPluginResourceBundle();
+  }
+
+  @Override
+  public ProviderData getProviderData() {
+    return provider.getProviderData();
+  }
+
+  @Override
+  public void setProviderData(ProviderData providerData) {
+    provider.setProviderData(providerData);
+  }
+
+  @Override
   public Activity getDefaultActivity() {
-    return new Activity(TimeEvent.TIME, 0, TimeEvent.TIME, 86399, 250, TimeUnit.MILLISECONDS);
+    return provider.getDefaultActivity();
+  }
+
+  @Override
+  public void configurationHasChanged() {
+    provider.configurationHasChanged();
   }
 
   @Override
   public Optional<UIList> getProviderDialog() {
+    return getUiList();
+  }
+
+  @Override
+  public Optional<List<ProviderProperty>> getSupportedProperties() {
+    return provider.getSupportedProperties();
+  }
+
+  @Override
+  public Optional<List<Table>> getDefaultTables() {
+    return provider.getDefaultTables();
+  }
+
+  @Override
+  public Setting getDefaultProviderSetting() {
+    return provider.getDefaultProviderSetting();
+  }
+
+  @Override
+  public String testProviderConnection(Setting testSetting) throws IOException {
+    return provider.testProviderConnection(testSetting);
+  }
+
+  @Override
+  public void doOnFirstRun() throws IOException {
+    provider.doOnFirstRun();
+  }
+
+  @Override
+  public boolean doActivityWork(Map<String, Object> variables) {
+    return provider.doActivityWork(variables);
+  }
+
+  @Override
+  public ExporterData getExporterData() {
+    return exporter.getExporterData();
+  }
+
+  @Override
+  public void setExporterData(ExporterData exporterData) {
+    exporter.setExporterData(exporterData);
+  }
+
+  /**
+   * Initializes the MQTT exporter by starting the background consumer thread.
+   */
+  @Override
+  public void initialize() {
+    exporter.initialize();
+  }
+
+  /**
+   * Gracefully shuts down MQTT exporter and releases resources.
+   */
+  @Override
+  public void shutdown() {
+    provider.shutdown();
+    exporter.shutdown();
+  }
+
+  /**
+   * Adds data to the export queue for asynchronous processing.
+   *
+   * @param transferData the data to export.
+   */
+  @Override
+  public void addExport(TransferData transferData) {
+    exporter.addExport(transferData);
+  }
+
+  /**
+   * Tests connectivity to the MQTT broker using the given settings.
+   *
+   * @param testSetting MQTT configuration settings.
+   * @return an empty string if successful, or throws IOException on failure.
+   */
+  @Override
+  public String testExporterConnection(Setting testSetting) throws IOException {
+    return exporter.testExporterConnection(testSetting);
+  }
+
+  /**
+   * Retrieves the exporter dialog for the current locale.
+   *
+   * @return an optional UIList containing the dialog elements.
+   */
+  @Override
+  public Optional<UIList> getExporterDialog() {
+    return getUiList();
+  }
+
+  /**
+   * Retrieves the default exporter configuration.
+   *
+   * @return a map containing the default configuration parameters.
+   */
+  @Override
+  public Setting getDefaultExporterSetting() {
+    return exporter.getDefaultExporterSetting();
+  }
+
+  @Override
+  public String getLockObject() {
+    return provider.getLockObject();
+  }
+
+  private Optional<UIList> getUiList() {
     UIList uiList = new UIList();
     uiList.addElement(
         new UITextElementBuilder().withLabel(resourceBundle.getString("mqtt.title")).build());
@@ -182,9 +272,9 @@ public class Mqtt extends AbstractProvider implements MqttCallback {
             .withType(HtmlInputType.TEXT)
             .withColumnWidth(HtmlWidth.HALF)
             .withRequired(true)
-            .withTooltip(resourceBundle.getString("mqtt.topicname.tooltip"))
-            .withLabel(resourceBundle.getString("mqtt.topicname.text"))
-            .withPlaceholder(resourceBundle.getString("mqtt.topicname.text"))
+            .withTooltip(resourceBundle.getString("mqtt.topic.name.tooltip"))
+            .withLabel(resourceBundle.getString("mqtt.topic.name.text"))
+            .withPlaceholder(resourceBundle.getString("mqtt.topic.name.text"))
             .withInvalidFeedback(resourceBundle.getString(REQUIRED_ERROR))
             .build());
     uiList.addElement(
@@ -198,135 +288,5 @@ public class Mqtt extends AbstractProvider implements MqttCallback {
             .build());
 
     return Optional.of(uiList);
-  }
-
-  @Override
-  public Optional<List<ProviderProperty>> getSupportedProperties() {
-    return Optional.empty();
-  }
-
-  @Override
-  public Optional<List<Table>> getDefaultTables() {
-    return Optional.empty();
-  }
-
-  @Override
-  public Setting getDefaultProviderSetting() {
-    Setting setting = new Setting();
-    setting.setProviderHost("localhost");
-    setting.setProviderPort(1883);
-    setting.setReadTimeoutMilliseconds(5000);
-    setting.setSsl(false);
-    setting.setConfigurationValue(TOPIC_NAME, "solarreader");
-    return setting;
-  }
-
-  @Override
-  public void configurationHasChanged() {
-    super.configurationHasChanged();
-    Setting setting = providerData.getSetting();
-    topic = setting.getConfigurationValueAsString(TOPIC_NAME, "");
-    Logger.debug("new configuration: {}", setting);
-    try {
-      if (connection != null) connection.disconnect();
-      connection = connectionFactory.createConnection(setting);
-      connection.connect();
-      connection.subscribe(topic, this);
-    } catch (IOException e) {
-      Logger.error(e);
-    }
-  }
-
-  @Override
-  public String testProviderConnection(Setting testSetting) throws IOException {
-    MqttConnection testConnection = connectionFactory.createConnection(testSetting);
-    try (testConnection) {
-      testConnection.checkConnection();
-    }
-    return "";
-  }
-
-  @Override
-  public void doOnFirstRun() throws IOException {
-    Logger.debug("do on first run...");
-    connection.connect();
-    connection.subscribe(topic, this);
-  }
-
-  @Override
-  public boolean doActivityWork(Map<String, Object> variables) {
-    if (messageQueue.isEmpty()) return false;
-    Iterator<ValueText> iterator = messageQueue.iterator();
-    while (iterator.hasNext()) {
-      ValueText valueText = iterator.next();
-      variables.put(valueText.getValue(), valueText.getText());
-      iterator.remove();
-    }
-    return true;
-  }
-
-  @Override
-  public void shutdown() {
-    connection.disconnect();
-  }
-
-  @Override
-  public void setProviderData(ProviderData providerData) {
-    this.providerData = providerData;
-    Setting setting = providerData.getSetting();
-    topic = setting.getConfigurationValueAsString(TOPIC_NAME, "");
-    connection = connectionFactory.createConnection(setting);
-    configurationHasChanged();
-  }
-
-  @Override
-  public void connectionLost(Throwable cause) {
-    Logger.error("connection lost: {}", cause.getMessage());
-    try {
-      connection.connect();
-    } catch (ConnectException e) {
-      Logger.error(e.getMessage());
-    }
-  }
-
-  @Override
-  public void messageArrived(String topic, MqttMessage mqttMessage) {
-    String payload = extractPayloadValue(mqttMessage);
-    messageQueue.offer(new ValueText(topic, payload));
-    Logger.debug(
-        "message received, topic='{}', payload='{}', payload value='{}",
-        topic,
-        new String(mqttMessage.getPayload()),
-        payload);
-  }
-
-  @Override
-  public void deliveryComplete(IMqttDeliveryToken token) {
-    // Nothing to do
-  }
-
-  /**
-   * Converts the payload of an MQTT message to a meaningful string.
-   * If the payload is a JSON object with a "value" field, extract it.
-   * Otherwise, return the raw payload string.
-   *
-   * @param mqttMessage the incoming MQTT message
-   * @return extracted value as string or raw message
-   */
-  private String extractPayloadValue(MqttMessage mqttMessage) {
-    String raw = new String(mqttMessage.getPayload());
-    try {
-      JsonElement element = GlobalGson.getInstance().fromJson(raw, JsonElement.class);
-      if (element.isJsonObject()) {
-        JsonObject obj = element.getAsJsonObject();
-        if (obj.has("value")) {
-          return obj.get("value").getAsString();
-        }
-      }
-    } catch (JsonSyntaxException e) {
-      // Not a JSON string, fallback to raw
-    }
-
-    return raw;
   }
 }
