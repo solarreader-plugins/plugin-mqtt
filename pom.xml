@@ -6,7 +6,7 @@
 
     <artifactId>Mqtt</artifactId>
     <groupId>de.schnippsche.solarreader.plugins</groupId>
-    <version>1.0.3</version>
+    <version>1.0.4</version>
 
     <properties>
         <maven.compiler.release>11</maven.compiler.release>
@@ -34,7 +34,7 @@
         <software.repository>https://github.com/solarreader-plugins/plugin-mqtt</software.repository>
         <software.icon>mqtt.svg</software.icon>
         <software.support.info>send and receive MQTT messages</software.support.info>
-        <software.interfaces>URL</software.interfaces>
+        <software.interfaces>NONE</software.interfaces>
         <software.protocol>HTTP</software.protocol>
 
     </properties>
