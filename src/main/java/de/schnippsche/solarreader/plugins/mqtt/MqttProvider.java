@@ -204,7 +204,7 @@ public class MqttProvider implements MqttCallback {
    * Shuts down the provider by disconnecting from the MQTT broker.
    */
   public void shutdown() {
-    connection.disconnect();
+    if (connection != null) connection.disconnect();
   }
 
   /**
